@@ -8,10 +8,10 @@
  * with this source code in the file LICENSE.
  */
 
-namespace easyRabbitmq;
 require_once '../vendor/autoload.php';
 
 use PhpAmqpLib\Connection\AMQPStreamConnection;
+use PhpAmqpLib\Message\AMQPMessage;
 
 class RabbitmqConnent
 {
@@ -41,12 +41,12 @@ class RabbitmqConnent
     protected $vhost = '/';
 
     /**
-     * @var object
+     * @var object 链接对象
      */
     protected $connection;
 
     /**
-     * @var object
+     * @var object 通道对象
      */
     protected $channel;
 
@@ -56,17 +56,38 @@ class RabbitmqConnent
     protected $exchange_obj;
 
     /**
-     * @var string
+     * @var 队列对象
      */
-    protected $set_name;
+    protected $queue;
+
+    /**
+     * @var
+     */
+    protected $exchange_name;
+
+    /**
+     * @var
+     */
+    protected $queue_name;
 
     /**
      * 连接rabbitmq
      * crx 2019年4月3日17:50:48
      * RabbitmqConnent constructor.
+     * @param $exchange_name 交换机名称
+     * @param $queue_name 队列名称
+     * @param $exchange_type 交换机类型
+     * @param bool $passive
+     * @param bool $durable
+     * @param bool $exclusive
+     * @param bool $auto_delete
      */
-    public function __construct()
+    public function __construct($exchange_name, $queue_name, $exchange_type, $passive=false, $durable=false, $exclusive=false, $auto_delete=false)
     {
+        $this->exchange_name = $exchange_name;
+
+        $this->queue_name = $queue_name;
+
         // 建立连接
         $this->connection = new AMQPStreamConnection(
             $this->host,
@@ -76,72 +97,41 @@ class RabbitmqConnent
         );
         $this->channel = $this->connection->channel();
 
-        $this->exchange_obj = new AMQPExchange($this->channel);
-    }
+        $this->exchange_obj = $this->channel->exchange_declare($exchange_name, $exchange_type, $passive, $durable, $auto_delete);
 
-    /**
-     * 设置交换机名称
-     * crx 2019年4月3日17:50:39
-     * @param string $name
-     */
-    public function setName(string $name)
-    {
-        $this->set_name = $this->exchange_obj->setName($name);
-    }
+        $this->queue = $this->channel->queue_declare($queue_name, $passive, $durable, $exclusive, $auto_delete);
 
-    /**
-     * 设置交换机类型
-     * crx 2019年4月3日17:52:33
-     * @param string $amqp_ex_type
-     * @return bool
-     */
-    public function setType($amqp_ex_type = 'direct')
-    {
-        switch ($amqp_ex_type) {
-            case 'direct':
-                return $this->exchange_obj->setType(AMQP_EX_TYPE_DIRECT);
-                break;
-            case 'fanout':
-                return $this->exchange_obj->setType(AMQP_EX_TYPE_FANOUT);
-                break;
-            case 'headers':
-                return $this->exchange_obj->setType(AMQP_EX_TYPE_HEADERS);
-                break;
-            case 'topic':
-                return $this->exchange_obj->setType(AMQP_EX_TYPE_TOPIC);
-                break;
-            default:
-                return false;
-            break;
-        }
-    }
-
-    /**
-     * 设置持久化
-     * crx 2019年4月3日18:05:02
-     * @param $flags
-     * AMQP_DURABLE, 持久化 ,支持rabbitMq重启时交换机自动恢复
-     * AMQP_PASSIVE,
-     * AMQP_EXCLUSIVE,
-     * AMQP_AUTODELETE.
-     */
-    public function setFlags($flags = AMQP_DURABLE)
-    {
-        $this->exchange_obj->setFlags($flags);
+        return $this;
     }
 
     /**
      * 发送信息
      * crx 2019年4月3日17:50:43
      * @param string $msg
+     * @param $roution_key
+     * @param array $propertive
      * @return bool
-     * @throws \AMQPChannelException
-     * @throws \AMQPConnectionException
-     * @throws \AMQPExchangeException
      */
-    public function publish(string $msg)
+    public function publish(string $msg, $roution_key, $propertive = ['delivery_mode'=>2])
     {
-        return $this->exchange_obj->publish($msg);
+        $data = new AMQPMessage($msg,$propertive);
+        return $this->channel->basic_publish($data, $this->exchange_name, $roution_key);
+    }
+
+    /**
+     * 接收信息
+     * crx 2019年4月4日10:48:48
+     */
+    public function consume()
+    {
+        $callback = function ($msg) {
+            echo " [x] Received :", $msg->body, "\n";
+        };
+        $this->channel->basic_qos(null,1,null);
+        $this->channel->basic_consume('hello','',false,true,false,false,$callback);
+        while (count($this->channel->callbacks)) {
+            $this->channel->wait();
+        }
     }
 
     /**
@@ -149,7 +139,8 @@ class RabbitmqConnent
      */
     public function __destruct()
     {
-        $this->connection->disconnect();
+        $this->connection->close();
+        $this->channel->close();
     }
 }
 
